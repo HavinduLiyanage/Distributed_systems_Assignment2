@@ -47,11 +47,11 @@ A complete **THREE-TIER distributed banking system** implementing:
 ## Features
 
 ### Core Banking Operations
-- ✅ User authentication with session tokens
-- ✅ Balance queries
-- ✅ Money transfers with sophisticated fee calculation
-- ✅ Transfer status tracking (PENDING, COMPLETED, FAILED)
-- ✅ Audit logging
+-  User authentication with session tokens
+-  Balance queries
+-  Money transfers with sophisticated fee calculation
+-  Transfer status tracking (PENDING, COMPLETED, FAILED)
+-  Audit logging
 
 ### Fee Structure (6 Tiers)
 | Transfer Amount | Fee Percentage | Per-Transfer Cap |
@@ -233,13 +233,13 @@ Transfers are executed as **atomic database transactions**:
 ## Error Handling
 
 The system handles:
-- ❌ Invalid credentials
-- ❌ Insufficient funds
-- ❌ Invalid recipient accounts
-- ❌ Negative or zero transfer amounts
-- ❌ Database connection errors
-- ❌ Network timeouts
-- ❌ Concurrent access conflicts
+-  Invalid credentials
+-  Insufficient funds
+-  Invalid recipient accounts
+-  Negative or zero transfer amounts
+-  Database connection errors
+-  Network timeouts
+-  Concurrent access conflicts
 
 ---
 
@@ -277,18 +277,18 @@ The system handles:
 
 ## Assignment Requirements Met
 
-✅ Three-tier architecture implemented  
-✅ Pyro5 RPC communication  
-✅ SQLite database managed by BDB server only  
-✅ Authenticated APIs with session tokens  
-✅ 6-tier fee calculation with caps  
-✅ Transfer validation and error handling  
-✅ Database transactions for consistency  
-✅ Audit logging  
-✅ Mock data for testing  
-✅ Runnable from command line (no IDE required)  
-✅ Comprehensive test coverage  
-✅ Complete documentation  
+ Three-tier architecture implemented  
+ Pyro5 RPC communication  
+ SQLite database managed by BDB server only  
+ Authenticated APIs with session tokens  
+ 6-tier fee calculation with caps  
+ Transfer validation and error handling  
+ Database transactions for consistency  
+ Audit logging  
+ Mock data for testing  
+ Runnable from command line (no IDE required)  
+ Comprehensive test coverage  
+ Complete documentation  
 
 ---
 
