@@ -1,29 +1,29 @@
 """
 Database Export Utility
-CSI3344 Assignment 2 - Distributed Banking System
 
-Exports all SQLite database tables to CSV files for verification.
-Run this script to generate evidence for your report.
+Exports all SQLite tables to CSV files for verification and reporting.
 """
 
 import sqlite3
 import csv
 import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import DATABASE_FILE
 
 def export_table(cursor, table_name, filename):
-    """Export a single table to CSV"""
+    """Write table contents to CSV file with headers."""
     try:
         cursor.execute(f"SELECT * FROM {table_name}")
         rows = cursor.fetchall()
         
-        # Get column names
         column_names = [description[0] for description in cursor.description]
         
         with open(filename, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(column_names)  # Write header
-            writer.writerows(rows)      # Write data
+            writer.writerow(column_names)
+            writer.writerows(rows)
             
         print(f"✓ Exported {len(rows)} rows from '{table_name}' to '{filename}'")
         

@@ -1,18 +1,21 @@
 """
 Pyro5 Nameserver Starter
-CSI3344 Assignment 2 - Distributed Banking System
 
-This script starts the Pyro5 nameserver which allows 
-servers and clients to locate each other.
+Initializes and runs the Pyro5 nameserver for service discovery.
+The nameserver enables servers and clients to locate registered services by name.
 """
 
+import os
+import sys
 import Pyro5.api
 import Pyro5.nameserver
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import NAMESERVER_HOST, NAMESERVER_PORT
 
 
 def start_nameserver():
-    """Start the Pyro5 nameserver"""
+    """Initialize and run the Pyro5 nameserver with configured host and port."""
     try:
         print("=" * 60)
         print("Starting Pyro5 Nameserver")
@@ -23,8 +26,6 @@ def start_nameserver():
         print("Press Ctrl+C to stop the nameserver")
         print("=" * 60)
         
-        # Start the nameserver
-        # Start the nameserver components
         uri, daemon, broadcast = Pyro5.nameserver.start_ns(
             host=NAMESERVER_HOST,
             port=NAMESERVER_PORT,
@@ -34,7 +35,6 @@ def start_nameserver():
         print(f"Nameserver URI: {uri}")
         print("Nameserver is running...")
         
-        # Enter the request loop
         daemon.requestLoop()
         
     except KeyboardInterrupt:

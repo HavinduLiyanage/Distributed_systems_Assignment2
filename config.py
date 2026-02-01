@@ -1,20 +1,17 @@
 """
-Configuration file for the Distributed Banking System
-CSI3344 Assignment 2 - Three-Tier Architecture
+Shared configuration for the distributed banking system.
+Defines server endpoints, fee tiers, and test user credentials.
 """
 
-# Pyro5 Configuration
 NAMESERVER_HOST = "127.0.0.1"
 NAMESERVER_PORT = 9090
 
-# Server Object Names
 BAS_SERVER_NAME = "bank.application.server"
 BDB_SERVER_NAME = "bank.database.server"
 
-# Database Configuration
-DATABASE_FILE = "banking_system.db"
+import os
+DATABASE_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "data", "banking_system.db"))
 
-# Session Configuration
 TOKEN_EXPIRATION_HOURS = 24
 
 # Fee Tier Table (amount ranges and fee rules)
@@ -28,7 +25,6 @@ FEE_TIERS = [
     (100000.01, float('inf'), 0.0005, 100.00)  # 0.05%, cap $100
 ]
 
-# Mock User Credentials (Phase 1 - In-Memory)
 MOCK_USERS = {
     "john": {
         "password": "pass123",

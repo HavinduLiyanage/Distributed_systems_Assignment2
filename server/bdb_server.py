@@ -1,17 +1,19 @@
 """
 Bank Database Server (BDB)
-CSI3344 Assignment 2 - Distributed Banking System
-Phase 2: Database Tier
 
-This server manages all persistent data using SQLite.
-Only the BAS server can access this server (not BC client).
+Manages all persistent data operations using SQLite.
+Designed to be accessed exclusively by the BAS server tier.
 """
 
+import os
+import sys
 import sqlite3
 import Pyro5.api
 import Pyro5.server
 from datetime import datetime, timedelta
 import uuid
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import (
     NAMESERVER_HOST, NAMESERVER_PORT, BDB_SERVER_NAME,
     DATABASE_FILE, MOCK_USERS, TOKEN_EXPIRATION_HOURS
@@ -21,28 +23,29 @@ from config import (
 @Pyro5.api.expose
 class BankDatabaseServer:
     """
-    Database server that manages all persistent data.
-    Exposes methods via Pyro5 for the BAS server to call.
+    Provides data persistence layer for the banking system.
+    All database operations are exposed via Pyro5 RPC for BAS server access.
     """
     
     def __init__(self):
-        """Initialize the database server"""
+        """Initialize database connection and schema."""
         self.db_file = DATABASE_FILE
         self.init_database()
         print(f"[BDB] Database initialized: {self.db_file}")
     
     def get_connection(self):
-        """Get a database connection"""
+        """Create a new SQLite connection with row factory enabled."""
         conn = sqlite3.connect(self.db_file)
-        conn.row_factory = sqlite3.Row  # Access columns by name
+        conn.row_factory = sqlite3.Row
         return conn
     
+    
     def init_database(self):
-        """Create all tables and insert mock data"""
+        """Initialize database schema and populate with test data if tables are empty."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Create users table
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +56,7 @@ class BankDatabaseServer:
             )
         """)
         
-        # Create accounts table
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 account_id INTEGER PRIMARY KEY,
@@ -64,7 +67,7 @@ class BankDatabaseServer:
             )
         """)
         
-        # Create transfers table
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS transfers (
                 transfer_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +84,7 @@ class BankDatabaseServer:
             )
         """)
         
-        # Create sessions table
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +96,7 @@ class BankDatabaseServer:
             )
         """)
         
-        # Create audit logs table
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS audit_logs (
                 log_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,19 +107,20 @@ class BankDatabaseServer:
             )
         """)
         
-        # Insert mock users if they don't exist
         for username, data in MOCK_USERS.items():
             cursor.execute(
                 "SELECT user_id FROM users WHERE username = ?",
                 (username,)
             )
             if cursor.fetchone() is None:
-                # Insert user
+                # Hash password before storage
+                import hashlib
+                pwd_hash = hashlib.sha256(data["password"].encode()).hexdigest()
+                
                 cursor.execute(
                     "INSERT INTO users (user_id, username, password_hash, email) VALUES (?, ?, ?, ?)",
-                    (data["user_id"], username, data["password"], f"{username}@bank.com")
+                    (data["user_id"], username, pwd_hash, f"{username}@bank.com")
                 )
-                # Insert account with initial balance
                 cursor.execute(
                     "INSERT INTO accounts (account_id, user_id, balance) VALUES (?, ?, ?)",
                     (data["account_id"], data["user_id"], data["initial_balance"])
@@ -125,11 +129,30 @@ class BankDatabaseServer:
         conn.commit()
         conn.close()
         print("[BDB] Database tables created and mock data inserted")
-    
-    # ==================== User Management ====================
-    
+
+    def log_failed_transfer(self, from_account_id, to_account_id, amount, fee, reference, error_message):
+        """Persist a failed transfer attempt for audit and status tracking."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # We record it as FAILED immediately
+            cursor.execute(
+                """INSERT INTO transfers 
+                   (from_account_id, to_account_id, amount, fee, status, reference, completed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (from_account_id, to_account_id, amount, fee, "FAILED", f"{reference} [Error: {error_message}]", datetime.now().isoformat())
+            )
+            transfer_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            return transfer_id
+        except Exception as e:
+            if conn:
+                conn.close()
+            print(f"[BDB] Failed to log failed transfer: {e}")
+            return None
     def get_user_by_username(self, username):
-        """Get user record by username"""
+        """Retrieve user credentials and metadata by username."""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -149,7 +172,7 @@ class BankDatabaseServer:
         return None
     
     def create_session(self, user_id, token, expires_at):
-        """Create a new session for authenticated user"""
+        """Persist new user session with expiration timestamp."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -167,7 +190,7 @@ class BankDatabaseServer:
             raise Exception(f"Failed to create session: {e}")
     
     def validate_session(self, token):
-        """Validate session token and return user_id if valid"""
+        """Verify session token and check expiration. Returns user_id if valid, None otherwise."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -184,10 +207,8 @@ class BankDatabaseServer:
                 return row["user_id"]
         return None
     
-    # ==================== Account Management ====================
-    
     def get_account_by_user_id(self, user_id):
-        """Get account record by user_id"""
+        """Retrieve account details for a given user."""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -206,7 +227,7 @@ class BankDatabaseServer:
         return None
     
     def get_account_by_id(self, account_id):
-        """Get account record by account_id"""
+        """Retrieve account details by account identifier."""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -225,7 +246,7 @@ class BankDatabaseServer:
         return None
     
     def get_balance(self, account_id):
-        """Get current balance for an account"""
+        """Query current account balance."""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -240,7 +261,7 @@ class BankDatabaseServer:
         return None
     
     def update_balance(self, account_id, new_balance):
-        """Update account balance"""
+        """Set new balance for specified account."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -257,10 +278,8 @@ class BankDatabaseServer:
             conn.close()
             raise Exception(f"Failed to update balance: {e}")
     
-    # ==================== Transfer Management ====================
-    
     def create_transfer(self, from_account_id, to_account_id, amount, fee, reference, status="PENDING"):
-        """Create a new transfer record"""
+        """Persist transfer record with specified status."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -280,7 +299,7 @@ class BankDatabaseServer:
             raise Exception(f"Failed to create transfer: {e}")
     
     def update_transfer_status(self, transfer_id, status, completed_at=None):
-        """Update transfer status"""
+        """Modify transfer status and optionally set completion timestamp."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -304,7 +323,7 @@ class BankDatabaseServer:
             raise Exception(f"Failed to update transfer status: {e}")
     
     def get_transfer(self, transfer_id):
-        """Get transfer record by ID"""
+        """Retrieve complete transfer details by identifier."""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -330,83 +349,143 @@ class BankDatabaseServer:
             }
         return None
     
-    def execute_transfer_transaction(self, from_account_id, to_account_id, amount, fee, reference):
+    def get_user_transactions(self, account_id, limit=50):
         """
-        Execute transfer as an atomic transaction.
-        Returns (success, transfer_id, error_message)
+        Retrieve transaction history for account, ordered by most recent first.
+        Includes both incoming and outgoing transfers.
         """
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            # Start transaction
+            cursor.execute(
+                """SELECT transfer_id, from_account_id, to_account_id, amount, fee, 
+                          status, reference, created_at, completed_at
+                   FROM transfers 
+                   WHERE from_account_id = ? OR to_account_id = ?
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (account_id, account_id, limit)
+            )
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            transactions = []
+            for row in rows:
+                transactions.append({
+                    "transfer_id": row["transfer_id"],
+                    "from_account_id": row["from_account_id"],
+                    "to_account_id": row["to_account_id"],
+                    "amount": row["amount"],
+                    "fee": row["fee"],
+                    "status": row["status"],
+                    "reference": row["reference"],
+                    "created_at": row["created_at"],
+                    "completed_at": row["completed_at"]
+                })
+            return transactions
+            
+        except Exception as e:
+            if conn:
+                conn.close()
+            raise Exception(f"Failed to retrieve user transactions: {e}")
+    
+    def settle_transfer_transaction(self, transfer_id):
+        """
+        Execute fund transfer logic for a PENDING transfer.
+        Atomically checks balance, updates accounts, and sets status to COMPLETED.
+        If insufficient funds, sets status to FAILED.
+        Returns (success, error_message).
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
             conn.execute("BEGIN TRANSACTION")
             
-            # Get current balances
+            # 1. Get transfer details
+            cursor.execute("SELECT from_account_id, to_account_id, amount, fee, status FROM transfers WHERE transfer_id = ?", (transfer_id,))
+            transfer = cursor.fetchone()
+            
+            if not transfer:
+                conn.rollback()
+                return (False, "Transfer record not found")
+                
+            if transfer["status"] != "PENDING":
+                conn.rollback()
+                return (False, f"Transfer is already {transfer['status']}")
+            
+            from_account_id = transfer["from_account_id"]
+            to_account_id = transfer["to_account_id"]
+            amount = transfer["amount"]
+            fee = transfer["fee"]
+            
+            # 2. Check Sender Balance
             cursor.execute("SELECT balance FROM accounts WHERE account_id = ?", (from_account_id,))
             sender_row = cursor.fetchone()
             if not sender_row:
-                conn.rollback()
-                conn.close()
-                return (False, None, "Sender account not found")
+                # Account missing? Fail transfer
+                cursor.execute("UPDATE transfers SET status = ?, reference = reference || ' [Error: Sender missing]', completed_at = ? WHERE transfer_id = ?", 
+                               ("FAILED", datetime.now().isoformat(), transfer_id))
+                conn.commit()
+                return (False, "Sender account not found")
             
             sender_balance = sender_row["balance"]
             total_deduction = amount + fee
             
-            # Check sufficient balance
             if sender_balance < total_deduction:
-                conn.rollback()
-                conn.close()
-                return (False, None, "Insufficient balance")
+                # Insufficient funds -> Fail transfer
+                cursor.execute("UPDATE transfers SET status = ?, reference = reference || ' [Error: Insufficient funds]', completed_at = ? WHERE transfer_id = ?", 
+                               ("FAILED", datetime.now().isoformat(), transfer_id))
+                conn.commit()
+                return (False, f"Insufficient balance. Available: ${sender_balance:.2f}")
             
-            # Check recipient exists
-            cursor.execute("SELECT balance FROM accounts WHERE account_id = ?", (to_account_id,))
+            # 3. Check Recipient Existence
+            cursor.execute("SELECT account_id, balance FROM accounts WHERE account_id = ?", (to_account_id,))
             recipient_row = cursor.fetchone()
             if not recipient_row:
-                conn.rollback()
-                conn.close()
-                return (False, None, "Recipient account not found")
+                 cursor.execute("UPDATE transfers SET status = ?, reference = reference || ' [Error: Recipient missing]', completed_at = ? WHERE transfer_id = ?", 
+                               ("FAILED", datetime.now().isoformat(), transfer_id))
+                 conn.commit()
+                 return (False, "Recipient account not found")
             
             recipient_balance = recipient_row["balance"]
             
-            # Deduct from sender
+            # 4. Execute Updates
             new_sender_balance = round(sender_balance - total_deduction, 2)
             cursor.execute(
                 "UPDATE accounts SET balance = ? WHERE account_id = ?",
                 (new_sender_balance, from_account_id)
             )
             
-            # Add to recipient
             new_recipient_balance = round(recipient_balance + amount, 2)
             cursor.execute(
                 "UPDATE accounts SET balance = ? WHERE account_id = ?",
                 (new_recipient_balance, to_account_id)
             )
             
-            # Create transfer record with COMPLETED status
             cursor.execute(
-                """INSERT INTO transfers 
-                   (from_account_id, to_account_id, amount, fee, status, reference, completed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (from_account_id, to_account_id, amount, fee, "COMPLETED", reference, datetime.now().isoformat())
+                "UPDATE transfers SET status = ?, completed_at = ? WHERE transfer_id = ?",
+                ("COMPLETED", datetime.now().isoformat(), transfer_id)
             )
-            transfer_id = cursor.lastrowid
             
-            # Commit transaction
             conn.commit()
             conn.close()
             
-            return (True, transfer_id, None)
+            return (True, None)
             
         except Exception as e:
-            conn.rollback()
-            conn.close()
-            return (False, None, f"Transaction failed: {e}")
-    
-    # ==================== Audit Logging ====================
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+                conn.close()
+            return (False, f"Transaction error: {e}")
     
     def log_operation(self, operation, user_id, details):
-        """Log an operation for audit trail"""
+        """Record operation in audit log for compliance and debugging."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -426,25 +505,18 @@ class BankDatabaseServer:
 
 
 def main():
-    """Start the BDB server"""
+    """Initialize and register BDB server with nameserver."""
     print("=" * 60)
     print("Bank Database Server (BDB) - Starting")
     print("=" * 60)
     
     try:
-        # Create database server instance
         bdb_server = BankDatabaseServer()
         
-        # Start Pyro5 daemon
         daemon = Pyro5.server.Daemon()
-        
-        # Locate nameserver
         ns = Pyro5.api.locate_ns(host=NAMESERVER_HOST, port=NAMESERVER_PORT)
         
-        # Register server with daemon
         uri = daemon.register(bdb_server)
-        
-        # Register with nameserver
         ns.register(BDB_SERVER_NAME, uri)
         
         print(f"[BDB] Server registered as '{BDB_SERVER_NAME}'")
@@ -454,7 +526,6 @@ def main():
         print("[BDB] Press Ctrl+C to stop")
         print("=" * 60)
         
-        # Start request loop
         daemon.requestLoop()
         
     except KeyboardInterrupt:

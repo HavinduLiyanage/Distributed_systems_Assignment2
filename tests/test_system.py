@@ -1,45 +1,40 @@
 """
 System Test Suite
-CSI3344 Assignment 2 - Distributed Banking System
 
-Comprehensive automated tests covering:
-1. Authentication flows
-2. Balance queries
-3. Fee calculation logic (all 6 tiers)
-4. Transfer validation
-5. Concurrency checks
+Comprehensive automated tests validating authentication, balance queries,
+fee calculation across all tiers, transfer validation, and idempotency.
 """
 
+import os
+import sys
 import unittest
 import Pyro5.api
 import time
-import sys
 import sqlite3
-from config import NAMESERVER_HOST, NAMESERVER_PORT, BAS_SERVER_NAME, DATABASE_FILE
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from config import NAMESERVER_HOST, NAMESERVER_PORT, BAS_SERVER_NAME, DATABASE_FILE, BDB_SERVER_NAME
 
 class TestBankingSystem(unittest.TestCase):
     def setUp(self):
-        """Login before each test and ensure sufficient funds"""
-        # Ensure user has enough funds for all tests (inject directly into DB)
-        try:
-            conn = sqlite3.connect(DATABASE_FILE)
-            cursor = conn.cursor()
-            # Set John's balance to 10,000,000 to cover all test cases
-            cursor.execute("UPDATE accounts SET balance = 10000000.00 WHERE account_id = 1001")
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"Warning: Could not update test balance: {e}")
-
-        # Connect to BAS Server for each test to avoid Pyro5 threading issues
+        """Reset test account balance and establish authenticated session before each test."""
+        # Fix: Use Pyro5 to BDB for setup instead of direct SQLite connection
         try:
             ns = Pyro5.api.locate_ns(host=NAMESERVER_HOST, port=NAMESERVER_PORT)
-            uri = ns.lookup(BAS_SERVER_NAME)
-            self.bas = Pyro5.api.Proxy(uri)
+            
+            # Connect to BDB for test setup
+            bdb_uri = ns.lookup(BDB_SERVER_NAME)
+            self.bdb = Pyro5.api.Proxy(bdb_uri)
+            self.bdb.update_balance(1001, 10000000.00)
+            
+            # Connect to BAS for testing
+            bas_uri = ns.lookup(BAS_SERVER_NAME)
+            self.bas = Pyro5.api.Proxy(bas_uri)
+            
         except Exception as e:
-            self.fail(f"Failed to connect to BAS: {e}")
+            self.fail(f"Failed to connect to servers: {e}")
 
-        # We'll use 'john' for most tests
+        
         self.username = "john"
         self.password = "pass123"
         success, result = self.bas.login(self.username, self.password)
@@ -47,65 +42,55 @@ class TestBankingSystem(unittest.TestCase):
         self.token = result
 
     def test_01_login_invalid_credentials(self):
-        """Test login with wrong password"""
+        """Verify login rejection with incorrect password."""
         success, msg = self.bas.login("john", "wrongpass")
         self.assertFalse(success)
         self.assertIn("Invalid", msg)
 
     def test_02_login_invalid_username(self):
-        """Test login with non-existent user"""
+        """Verify login rejection for non-existent user."""
         success, msg = self.bas.login("nobody", "pass123")
         self.assertFalse(success)
         self.assertIn("Invalid", msg)
 
     def test_03_get_balance(self):
-        """Test balance query"""
+        """Verify balance query returns non-negative float."""
         success, balance = self.bas.get_balance(self.token)
         self.assertTrue(success)
         self.assertIsInstance(balance, float)
         self.assertGreaterEqual(balance, 0.0)
 
     def test_04_transfer_validation(self):
-        """Test transfer input validation"""
-        # invalid recipient
+        """Verify transfer input validation for invalid recipients, negative amounts, and self-transfers."""
         success, msg = self.bas.submit_transfer(self.token, 999999, 100.0)
         self.assertFalse(success)
         self.assertIn("Recipient account not found", msg)
-
-        # negative amount
         success, msg = self.bas.submit_transfer(self.token, 1002, -50.0)
         self.assertFalse(success)
         self.assertIn("positive", msg)
-
-        # self transfer
-        # First get john's account ID (assuming 1001 based on config, or we could query if we had that API exposed to client side, 
-        # but standardized config says 1001)
         success, msg = self.bas.submit_transfer(self.token, 1001, 10.0)
         self.assertFalse(success)
         self.assertIn("own account", msg)
 
     def test_05_fee_tier_1_boundary(self):
-        """Test Fee Tier 1 Boundary: $2,000.00 (0% fee)"""
-        # Requirement: $0.00 - $2,000.00 | 0% | $0 (Free tier)
+        """Test Tier 1 upper boundary: $2,000.00 should incur 0% fee."""
         amount = 2000.00
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 1 Boundary")
         self.assertTrue(success, f"Transfer failed: {result}")
         self.assertEqual(result['fee'], 0.00)
 
     def test_06_fee_tier_2_boundary_start(self):
-        """Test Fee Tier 2 Start: $2,000.01 (0.25% fee)"""
-        # Requirement: $2,000.01 - $10,000.00 | 0.25% | $20.00 Cap
+        """Test Tier 2 lower boundary: $2,000.01 should incur 0.25% fee."""
         amount = 2000.01
-        expected_fee = round(2000.01 * 0.0025, 2) # Should be 5.00
+        expected_fee = round(2000.01 * 0.0025, 2)
         
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 2 Start")
         self.assertTrue(success, f"Transfer failed: {result}")
         self.assertEqual(result['fee'], expected_fee)
 
     def test_07_fee_tier_2_boundary_end_cap(self):
-        """Test Fee Tier 2 End: $10,000.00 (0.25% fee, Capped at $20)"""
+        """Test Tier 2 upper boundary: $10,000.00 fee should be capped at $20."""
         amount = 10000.00
-        # Calculated: 10000 * 0.0025 = 25.00. Cap is 20.00.
         expected_fee = 20.00
         
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 2 End Cap")
@@ -113,19 +98,17 @@ class TestBankingSystem(unittest.TestCase):
         self.assertEqual(result['fee'], expected_fee)
 
     def test_08_fee_tier_3_boundary_start(self):
-        """Test Fee Tier 3 Start: $10,000.01 (0.20% fee)"""
-        # Requirement: $10,000.01 - $20,000.00 | 0.20% | $25.00 Cap
+        """Test Tier 3 lower boundary: $10,000.01 should incur 0.20% fee."""
         amount = 10000.01
-        expected_fee = round(10000.01 * 0.0020, 2) # ~20.00
+        expected_fee = round(10000.01 * 0.0020, 2)
         
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 3 Start")
         self.assertTrue(success, f"Transfer failed: {result}")
         self.assertEqual(result['fee'], expected_fee)
 
     def test_09_fee_tier_3_boundary_end_cap(self):
-        """Test Fee Tier 3 End: $20,000.00 (0.20% fee, Capped at $25)"""
+        """Test Tier 3 upper boundary: $20,000.00 fee should be capped at $25."""
         amount = 20000.00
-        # Calculated: 20000 * 0.0020 = 40.00. Cap is 25.00.
         expected_fee = 25.00
         
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 3 End Cap")
@@ -133,19 +116,17 @@ class TestBankingSystem(unittest.TestCase):
         self.assertEqual(result['fee'], expected_fee)
 
     def test_10_fee_tier_4_boundary_start(self):
-        """Test Fee Tier 4 Start: $20,000.01 (0.125% fee)"""
-        # Requirement: $20,000.01 - $50,000.00 | 0.125% | $40.00 Cap
+        """Test Tier 4 lower boundary: $20,000.01 should incur 0.125% fee."""
         amount = 20000.01
-        expected_fee = round(20000.01 * 0.00125, 2) # ~25.00
+        expected_fee = round(20000.01 * 0.00125, 2)
         
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 4 Start")
         self.assertTrue(success, f"Transfer failed: {result}")
         self.assertEqual(result['fee'], expected_fee)
 
     def test_11_fee_tier_4_boundary_end_cap(self):
-        """Test Fee Tier 4 End: $50,000.00 (0.125% fee, Capped at $40)"""
+        """Test Tier 4 upper boundary: $50,000.00 fee should be capped at $40."""
         amount = 50000.00
-        # Calculated: 50000 * 0.00125 = 62.50. Cap is 40.00.
         expected_fee = 40.00
         
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 4 End Cap")
@@ -153,19 +134,17 @@ class TestBankingSystem(unittest.TestCase):
         self.assertEqual(result['fee'], expected_fee)
     
     def test_12_fee_tier_5_boundary_start(self):
-        """Test Fee Tier 5 Start: $50,000.01 (0.08% fee)"""
-        # Requirement: $50,000.01 - $100,000.00 | 0.08% | $50.00 Cap
+        """Test Tier 5 lower boundary: $50,000.01 should incur 0.08% fee."""
         amount = 50000.01
-        expected_fee = round(50000.01 * 0.0008, 2) # ~40.00
+        expected_fee = round(50000.01 * 0.0008, 2)
         
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 5 Start")
         self.assertTrue(success, f"Transfer failed: {result}")
         self.assertEqual(result['fee'], expected_fee)
 
     def test_13_fee_tier_5_boundary_end_cap(self):
-        """Test Fee Tier 5 End: $100,000.00 (0.08% fee, Capped at $50)"""
+        """Test Tier 5 upper boundary: $100,000.00 fee should be capped at $50."""
         amount = 100000.00
-        # Calculated: 100000 * 0.08% = 80.00. Cap is 50.00.
         expected_fee = 50.00
         
         success, result = self.bas.submit_transfer(self.token, 1002, amount, "Tier 5 End Cap")
@@ -173,9 +152,7 @@ class TestBankingSystem(unittest.TestCase):
         self.assertEqual(result['fee'], expected_fee)
 
     def test_14_fee_rounding(self):
-        """Test Fee Rounding Logic"""
-        # Case from requirements: Amount = $3,333.33
-        # Calculated: 3333.33 * 0.0025 = 8.333325 -> Rounds to 8.33
+        """Verify fee calculation rounds to two decimal places correctly."""
         amount = 3333.33
         expected_fee = 8.33
         
@@ -184,12 +161,10 @@ class TestBankingSystem(unittest.TestCase):
         self.assertEqual(result['fee'], expected_fee)
 
     def test_16_insufficient_funds(self):
-        """Test Insufficient Funds: Transfer + Fee > Balance"""
-        # Get current balance
+        """Verify transfer rejection when balance is insufficient for amount plus fee."""
         success, balance = self.bas.get_balance(self.token)
         self.assertTrue(success)
         
-        # Try to transfer more than enough (balance + $100)
         huge_amount = balance + 100.0
         success, result = self.bas.submit_transfer(self.token, 1002, huge_amount, "Broke Test")
         
@@ -197,31 +172,48 @@ class TestBankingSystem(unittest.TestCase):
         self.assertIn("Insufficient balance", result)
 
     def test_17_reference_length(self):
-        """Test Reference Length Limit: Max 200 characters"""
-        # Exactly 200 chars should pass
+        """Verify reference message length validation (200 character limit)."""
         ok_ref = "A" * 200
         success, result = self.bas.submit_transfer(self.token, 1002, 10.0, ok_ref)
         self.assertTrue(success, f"200 char reference failed: {result}")
         
-        # 201 chars should fail
         bad_ref = "A" * 201
         success, result = self.bas.submit_transfer(self.token, 1002, 10.0, bad_ref)
         self.assertFalse(success)
         self.assertIn("too long", result)
 
     def test_18_idempotency(self):
-        """Test Idempotency: Reject immediate duplicate transfers"""
+        """Verify duplicate transfer detection within idempotency window."""
         amount = 1.99
         ref = f"Idempotency Test {time.time()}"
         
-        # First request should succeed
         success1, result1 = self.bas.submit_transfer(self.token, 1002, amount, ref)
         self.assertTrue(success1, f"First request failed: {result1}")
         
-        # Immediate second request (duplicate) should fail
         success2, result2 = self.bas.submit_transfer(self.token, 1002, amount, ref)
         self.assertFalse(success2)
         self.assertIn("Duplicate transfer", result2)
+
+    def test_19_failed_transfer_persistence(self):
+        """Verify failed transfers are recorded with FAILED status."""
+        # 1. Trigger failure with insufficient funds
+        success, balance = self.bas.get_balance(self.token)
+        huge_amount = balance + 500000.0
+        success, error_msg = self.bas.submit_transfer(self.token, 1002, huge_amount, "Persistence Test")
+        self.assertFalse(success)
+        
+        # 2. Extract Transfer ID from error message
+        # Expected format: "Transaction failed for ID <id>: <error>"
+        import re
+        match = re.search(r"ID (\d+)", error_msg)
+        self.assertTrue(match, f"Could not find Transfer ID in error message: {error_msg}")
+        transfer_id = int(match.group(1))
+        
+        # 3. Query status using the ID
+        success, transfer = self.bas.get_transfer_status(self.token, transfer_id)
+        self.assertTrue(success, "Could not retrieve failed transfer by ID")
+        self.assertEqual(transfer["status"], "FAILED")
+        self.assertIn("Insufficient", transfer["reference"])
 
 if __name__ == '__main__':
     print("="*60)

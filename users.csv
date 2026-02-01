@@ -1,3 +1,0 @@
-user_id,username,password_hash,email,created_at
-1,john,pass123,john@bank.com,2026-01-29 07:07:17
-2,jane,pass456,jane@bank.com,2026-01-29 07:07:17

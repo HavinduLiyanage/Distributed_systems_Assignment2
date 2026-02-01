@@ -1,6 +1,10 @@
 
+import os
+import sys
 import Pyro5.api
 import time
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import NAMESERVER_HOST, NAMESERVER_PORT, BAS_SERVER_NAME
 
 def run_diagnostic():
@@ -9,7 +13,6 @@ def run_diagnostic():
         uri = ns.lookup(BAS_SERVER_NAME)
         bas = Pyro5.api.Proxy(uri)
         
-        # Login
         success, token = bas.login("john", "pass123")
         if not success:
             print("Login failed")
@@ -17,13 +20,10 @@ def run_diagnostic():
         
         print(f"Token: {token}")
         
-        # 1. Test Insufficient Funds
         print("\n--- Diagnostic 1: Insufficient Funds ---")
-        # Try to transfer a huge amount
         success, result = bas.submit_transfer(token, 1002, 1000000000.0, "Broke Test")
         print(f"Result: {success}, Message: {result}")
         
-        # 2. Test Reference Length (> 200 chars)
         print("\n--- Diagnostic 2: Reference Length Limit ---")
         long_ref = "A" * 250
         success, result = bas.submit_transfer(token, 1002, 10.0, long_ref)
@@ -31,7 +31,6 @@ def run_diagnostic():
         if success:
              print("WARNING: Reference > 200 chars was accepted!")
 
-        # 3. Test Repeated Requests (Idempotency)
         print("\n--- Diagnostic 3: Repeated Requests ---")
         amount = 1.23
         ref = f"Repeat Test {time.time()}"

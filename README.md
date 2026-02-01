@@ -24,19 +24,19 @@ A complete **THREE-TIER distributed banking system** implementing:
 ```
 ┌─────────────────┐
 │   BC Client     │  (Banking Client - User Interface)
-│  bc_client.py   │
+│ client/bc_client.py│
 └────────┬────────┘
          │ Pyro5 RPC
          ▼
 ┌─────────────────┐
 │   BAS Server    │  (Bank Application Server - Business Logic)
-│  bas_server.py  │
+│ server/bas_server.py│
 └────────┬────────┘
          │ Pyro5 RPC
          ▼
 ┌─────────────────┐
 │   BDB Server    │  (Bank Database Server - Data Persistence)
-│  bdb_server.py  │
+│ server/bdb_server.py│
 └─────────────────┘
 ```
 
@@ -79,44 +79,17 @@ python -c "import Pyro5; print('Pyro5 installed successfully')"
 
 ---
 
-## Running the System
+## Running the System (Simplified)
 
-### Step 1: Start Pyro5 Nameserver
-Open a terminal and run:
+You can launch the entire system (all servers and the client) with a single command. This will automatically open each component in its own terminal window.
+
+### Windows (Recommended)
+Double-click the `start_all.bat` file in the root directory.
+
+### Any Platform
+Run the following command from the project root:
 ```bash
-python start_nameserver.py
-```
-**Expected output**: `Pyro5 Nameserver started on localhost:9090`
-
----
-
-### Step 2: Start BDB Server (Database Tier)
-Open a **new terminal** and run:
-```bash
-python bdb_server.py
-```
-**Expected output**: 
-- Database initialized
-- Mock users created
-- BDB Server registered and ready
-
----
-
-### Step 3: Start BAS Server (Application Tier)
-Open a **new terminal** and run:
-```bash
-python bas_server.py
-```
-**Expected output**: BAS Server registered and ready
-
----
-
-### Step 4: Start BC Client (Client Tier)
-Open a **new terminal** and run:
-```bash
-python bc_client.py
-```
-**Expected output**: Banking client menu displayed
+python run_all.py
 
 ---
 
@@ -175,7 +148,7 @@ Enter transfer ID: 1
 
 ### Run Automated Tests
 ```bash
-python test_system.py
+python tests/test_system.py
 ```
 This tests:
 - Authentication flows
@@ -187,9 +160,9 @@ This tests:
 
 ### Export Database for Verification
 ```bash
-python export_database.py
+python utils/export_database.py
 ```
-Creates CSV files: `users.csv`, `accounts.csv`, `transfers.csv`, `sessions.csv`, `audit_logs.csv`
+Creates CSV files in the root: `users.csv`, `accounts.csv`, `transfers.csv`, `sessions.csv`, `audit_logs.csv`
 
 ---
 
@@ -197,16 +170,21 @@ Creates CSV files: `users.csv`, `accounts.csv`, `transfers.csv`, `sessions.csv`,
 
 ```
 distributed-banking-system/
-├── config.py                 # Configuration & constants
+├── client/                   # Client-tier source code
+│   └── bc_client.py
+├── server/                   # Server-tier source code
+│   ├── bas_server.py
+│   ├── bdb_server.py
+│   └── start_nameserver.py
+├── data/                     # Persistent storage
+│   └── banking_system.db
+├── docs/                     # Project documentation
+├── tests/                    # Automated test suites
+├── utils/                    # Utility scripts
+│   └── export_database.py
+├── config.py                 # Shared configuration
 ├── requirements.txt          # Python dependencies
-├── start_nameserver.py       # Pyro5 nameserver starter
-├── bdb_server.py            # Database server (Phase 2)
-├── bas_server.py            # Application server
-├── bc_client.py             # Banking client
-├── test_system.py           # Automated test suite
-├── export_database.py       # Database export utility
-├── banking_system.db        # SQLite database (created at runtime)
-└── README.md                # This file
+└── README.md                 # This file
 ```
 
 ---
